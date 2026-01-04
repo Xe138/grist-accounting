@@ -78,6 +78,7 @@ Python: `int(datetime(2025, 10, 1).timestamp())`
 | Status | Choice | "Open", "Partial", "Paid" |
 | Memo | Text | |
 | EntryTransaction | Ref:Transactions | Link to journal entry |
+| Attachment | Attachments | Invoice/receipt files (use `["L", id]` format) |
 | Amount | Formula | Sum of BillLines.Amount |
 | AmountPaid | Formula | Sum of BillPayments.Amount |
 | AmountDue | Formula | Amount - AmountPaid |
@@ -395,6 +396,87 @@ After entering bills, verify:
 | Missing EntryTransaction link | Always update Bill.EntryTransaction after creating journal entry |
 | Bill status not updated | Manually set Status to "Paid" after full payment |
 | Using string dates | Dates must be Unix timestamps (seconds), not strings |
+
+## Uploading Attachments
+
+Attachments (invoices, receipts) are uploaded via the HTTP proxy endpoint, not MCP tools. This is efficient for binary files.
+
+### Workflow
+
+1. **Request session token** with write permission via MCP
+2. **Upload file** via `POST /api/v1/attachments` with multipart/form-data
+3. **Link attachment** to record via `update_records`
+
+### Upload Script
+
+Save this script and run: `./upload-attachment.sh <file> <record_table> <record_id>`
+
+```bash
+#!/bin/bash
+# upload-attachment.sh - Upload file and link to Grist record
+# Usage: ./upload-attachment.sh invoice.pdf Bills 13
+
+set -e
+
+FILE="$1"
+TABLE="$2"
+RECORD_ID="$3"
+
+if [[ -z "$FILE" || -z "$TABLE" || -z "$RECORD_ID" ]]; then
+    echo "Usage: $0 <file> <table> <record_id>"
+    echo "Example: $0 invoice.pdf Bills 13"
+    exit 1
+fi
+
+# Get session token from Claude (copy from request_session_token response)
+echo "Paste session token (from request_session_token MCP call):"
+read -r TOKEN
+
+# Base URL for the grist-mcp proxy
+BASE_URL="https://grist-mcp.bballou.com"
+
+# Upload attachment
+echo "Uploading $FILE..."
+RESPONSE=$(curl -s -X POST \
+    -H "Authorization: Bearer $TOKEN" \
+    -F "file=@$FILE" \
+    "$BASE_URL/api/v1/attachments")
+
+# Extract attachment ID
+ATTACHMENT_ID=$(echo "$RESPONSE" | jq -r '.data.attachment_id')
+
+if [[ "$ATTACHMENT_ID" == "null" || -z "$ATTACHMENT_ID" ]]; then
+    echo "Upload failed: $RESPONSE"
+    exit 1
+fi
+
+echo "Uploaded: attachment_id=$ATTACHMENT_ID"
+
+# Link to record via proxy
+echo "Linking to $TABLE id=$RECORD_ID..."
+curl -s -X POST \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "{\"method\": \"update_records\", \"table\": \"$TABLE\", \"records\": [{\"id\": $RECORD_ID, \"fields\": {\"Attachment\": [\"L\", $ATTACHMENT_ID]}}]}" \
+    "$BASE_URL/api/v1/proxy" | jq .
+
+echo "Done!"
+```
+
+### Linking Attachments
+
+Grist attachment columns use a special format: `["L", attachment_id]`
+
+```python
+# Link attachment ID 1 to Bill ID 13
+update_records("Bills", [{"id": 13, "fields": {"Attachment": ["L", 1]}}])
+```
+
+### Bills Table Attachment Column
+
+| Column | Type | Notes |
+|--------|------|-------|
+| Attachment | Attachments | Stores invoice/receipt files |
 
 ## Formula Columns (Auto-Calculated)
 
