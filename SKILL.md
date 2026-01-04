@@ -409,74 +409,29 @@ Attachments (invoices, receipts) are uploaded via the HTTP proxy endpoint, not M
 
 ### Upload Script
 
-Save this script and run: `./upload-attachment.sh <file> <record_table> <record_id>`
+Use `scripts/upload-attachment.sh` in this skill directory:
 
 ```bash
-#!/bin/bash
-# upload-attachment.sh - Upload file and link to Grist record
-# Usage: ./upload-attachment.sh invoice.pdf Bills 13
+# Get session token first (via MCP request_session_token tool)
+# Then run:
+./scripts/upload-attachment.sh invoice.pdf Bills 13
 
-set -e
+# Or pass token directly:
+./scripts/upload-attachment.sh invoice.pdf Bills 13 sess_abc123...
 
-FILE="$1"
-TABLE="$2"
-RECORD_ID="$3"
-
-if [[ -z "$FILE" || -z "$TABLE" || -z "$RECORD_ID" ]]; then
-    echo "Usage: $0 <file> <table> <record_id>"
-    echo "Example: $0 invoice.pdf Bills 13"
-    exit 1
-fi
-
-# Get session token from Claude (copy from request_session_token response)
-echo "Paste session token (from request_session_token MCP call):"
-read -r TOKEN
-
-# Base URL for the grist-mcp proxy
-BASE_URL="https://grist-mcp.bballou.com"
-
-# Upload attachment
-echo "Uploading $FILE..."
-RESPONSE=$(curl -s -X POST \
-    -H "Authorization: Bearer $TOKEN" \
-    -F "file=@$FILE" \
-    "$BASE_URL/api/v1/attachments")
-
-# Extract attachment ID
-ATTACHMENT_ID=$(echo "$RESPONSE" | jq -r '.data.attachment_id')
-
-if [[ "$ATTACHMENT_ID" == "null" || -z "$ATTACHMENT_ID" ]]; then
-    echo "Upload failed: $RESPONSE"
-    exit 1
-fi
-
-echo "Uploaded: attachment_id=$ATTACHMENT_ID"
-
-# Link to record via proxy
-echo "Linking to $TABLE id=$RECORD_ID..."
-curl -s -X POST \
-    -H "Authorization: Bearer $TOKEN" \
-    -H "Content-Type: application/json" \
-    -d "{\"method\": \"update_records\", \"table\": \"$TABLE\", \"records\": [{\"id\": $RECORD_ID, \"fields\": {\"Attachment\": [\"L\", $ATTACHMENT_ID]}}]}" \
-    "$BASE_URL/api/v1/proxy" | jq .
-
-echo "Done!"
+# Environment variable for custom endpoint:
+GRIST_MCP_URL=https://custom.example.com ./scripts/upload-attachment.sh ...
 ```
 
-### Linking Attachments
+Run `./scripts/upload-attachment.sh` without arguments for full usage.
 
-Grist attachment columns use a special format: `["L", attachment_id]`
+### Linking Attachments Manually
+
+Grist attachment columns use format: `["L", attachment_id]`
 
 ```python
-# Link attachment ID 1 to Bill ID 13
 update_records("Bills", [{"id": 13, "fields": {"Attachment": ["L", 1]}}])
 ```
-
-### Bills Table Attachment Column
-
-| Column | Type | Notes |
-|--------|------|-------|
-| Attachment | Attachments | Stores invoice/receipt files |
 
 ## Formula Columns (Auto-Calculated)
 
