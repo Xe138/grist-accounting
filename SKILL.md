@@ -9,202 +9,401 @@ description: Use when working with the Grist double-entry accounting system - re
 
 A complete double-entry accounting system for sole proprietorship service businesses. Every transaction creates balanced journal entries (debits = credits). Account balances roll up through parent-child hierarchy.
 
-## Schema Quick Reference
+## MCP Tools Available
 
-| Table | Purpose | Key Fields |
-|-------|---------|------------|
-| Accounts | Chart of accounts | Code, Name, Type, Parent, Balance |
-| Transactions | Journal entry headers | Date, Description, Reference, Status |
-| TransactionLines | Debits and credits | Transaction, Account, Debit, Credit |
-| Vendors | People you pay | Name, PaymentTerms, Balance |
-| Items | Common purchases | Name, DefaultAccount |
-| Bills | AP invoices | Vendor, BillDate, DueDate, Status, Amount, AmountDue |
-| BillLines | Bill line items | Bill, Item, Account, Amount |
-| BillPayments | Payment tracking | Bill, Transaction, Amount |
-| ReportingPeriods | Date ranges | Name, StartDate, EndDate, IsClosed |
+| Tool | Purpose |
+|------|---------|
+| `mcp__grist-accounting__list_documents` | List accessible Grist documents |
+| `mcp__grist-accounting__list_tables` | List tables in a document |
+| `mcp__grist-accounting__describe_table` | Get column schema for a table |
+| `mcp__grist-accounting__get_records` | Fetch records (with optional filter, sort, limit) |
+| `mcp__grist-accounting__add_records` | Insert new records, returns `{"inserted_ids": [...]}` |
+| `mcp__grist-accounting__update_records` | Update existing records by ID |
+| `mcp__grist-accounting__delete_records` | Delete records by ID |
+| `mcp__grist-accounting__sql_query` | Run read-only SQL queries |
+
+The document name is `accounting` for all operations.
+
+## Date Handling
+
+All date fields use **Unix timestamps** (seconds since 1970-01-01 UTC).
+
+| Date | Timestamp |
+|------|-----------|
+| Oct 1, 2025 | 1759363200 |
+| Nov 1, 2025 | 1762041600 |
+| Dec 1, 2025 | 1764633600 |
+| Jan 1, 2026 | 1767312000 |
+
+Python: `int(datetime(2025, 10, 1).timestamp())`
+
+## Complete Table Schemas
+
+### Accounts
+| Column | Type | Notes |
+|--------|------|-------|
+| Code | Text | Account number (e.g., "5080") |
+| Name | Text | Account name |
+| Type | Choice | "Asset", "Liability", "Equity", "Income", "Expense" |
+| Parent | Ref:Accounts | Parent account for hierarchy (0 = top-level) |
+| Description | Text | |
+| IsActive | Bool | |
+| Balance | Formula | Calculated from transactions |
+
+### Vendors
+| Column | Type | Notes |
+|--------|------|-------|
+| Name | Text | Vendor name |
+| DefaultExpenseAccount | Ref:Accounts | Auto-fills on bill lines |
+| PaymentTerms | Choice | "Due on Receipt", "Net 15", "Net 30" |
+| Notes | Text | |
+| IsActive | Bool | |
+| Balance | Formula | Sum of unpaid bills |
+
+### Items
+| Column | Type | Notes |
+|--------|------|-------|
+| Name | Text | Item name (e.g., "Software Subscription") |
+| DefaultAccount | Ref:Accounts | Expense account for this item |
+| DefaultDescription | Text | Auto-fills on bill lines |
+| IsActive | Bool | |
+
+### Bills
+| Column | Type | Notes |
+|--------|------|-------|
+| Vendor | Ref:Vendors | Required |
+| BillNumber | Text | Invoice number from vendor |
+| BillDate | Date | Unix timestamp |
+| DueDate | Date | Unix timestamp |
+| Status | Choice | "Open", "Partial", "Paid" |
+| Memo | Text | |
+| EntryTransaction | Ref:Transactions | Link to journal entry |
+| Amount | Formula | Sum of BillLines.Amount |
+| AmountPaid | Formula | Sum of BillPayments.Amount |
+| AmountDue | Formula | Amount - AmountPaid |
+
+### BillLines
+| Column | Type | Notes |
+|--------|------|-------|
+| Bill | Ref:Bills | Required |
+| Item | Ref:Items | Optional - auto-fills Account/Description |
+| Account | Ref:Accounts | Expense account |
+| Description | Text | |
+| Amount | Numeric | Line item amount |
+
+### Transactions
+| Column | Type | Notes |
+|--------|------|-------|
+| Date | Date | Unix timestamp |
+| Description | Text | Transaction description |
+| Reference | Text | Check number, invoice reference, etc. |
+| Status | Choice | "Draft", "Posted", "Cleared" |
+| Memo | Text | |
+| Total | Formula | Sum of debits |
+| IsBalanced | Formula | True if debits = credits |
+
+### TransactionLines
+| Column | Type | Notes |
+|--------|------|-------|
+| Transaction | Ref:Transactions | Required |
+| Account | Ref:Accounts | Required |
+| Debit | Numeric | Debit amount (or 0) |
+| Credit | Numeric | Credit amount (or 0) |
+| Memo | Text | |
+
+### BillPayments
+| Column | Type | Notes |
+|--------|------|-------|
+| Bill | Ref:Bills | Required |
+| Transaction | Ref:Transactions | Payment journal entry |
+| Amount | Numeric | Payment amount |
+| PaymentDate | Date | Unix timestamp |
+
+## Key Account IDs
+
+| ID | Code | Name | Type |
+|----|------|------|------|
+| 4 | 2000 | Accounts Payable | Liability |
+| 14 | 1001 | Checking Account | Asset |
+| 22 | 2203 | Due to Owner | Liability |
+| 36 | 5080 | Software & Subscriptions | Expense |
+
+Query all accounts:
+```sql
+SELECT id, Code, Name, Type FROM Accounts WHERE IsActive = true ORDER BY Code
+```
 
 ## Account Types
 
-| Type | Normal Balance | Examples |
-|------|----------------|----------|
-| Asset | Debit | Cash, AR, Prepaid |
-| Liability | Credit | AP, Credit Cards, Due to Owner |
-| Equity | Credit | Owner's Investment, Draws, Retained Earnings |
-| Income | Credit | Service Revenue, Interest Income |
-| Expense | Debit | Rent, Utilities, Office Supplies |
+| Type | Normal Balance | Increases With | Examples |
+|------|----------------|----------------|----------|
+| Asset | Debit | Debit | Cash, AR, Prepaid |
+| Liability | Credit | Credit | AP, Credit Cards, Due to Owner |
+| Equity | Credit | Credit | Owner's Investment, Draws, Retained Earnings |
+| Income | Credit | Credit | Service Revenue, Interest Income |
+| Expense | Debit | Debit | Rent, Utilities, Office Supplies |
 
-## Common Workflows
+## Complete Workflows
 
-### Record a Simple Expense
+### Create a Vendor
 
 ```python
-# Pay $50 for office supplies from checking
-transaction = add_records("Transactions", [{
-    "Date": "2026-01-03",
-    "Description": "Office supplies",
+add_records("Vendors", [{
+    "Name": "Acme Corp",
+    "DefaultExpenseAccount": 36,  # Software & Subscriptions
+    "PaymentTerms": "Due on Receipt",
+    "Notes": "Software vendor",
+    "IsActive": True
+}])
+# Returns: {"inserted_ids": [vendor_id]}
+```
+
+### Create Items for Common Purchases
+
+```python
+add_records("Items", [{
+    "Name": "Monthly Software",
+    "DefaultAccount": 36,
+    "DefaultDescription": "Monthly SaaS subscription",
+    "IsActive": True
+}])
+```
+
+### Complete Bill Entry (4 Steps)
+
+**Step 1: Create Bill Header**
+```python
+add_records("Bills", [{
+    "Vendor": 1,  # vendor_id
+    "BillNumber": "INV-001",
+    "BillDate": 1759708800,  # Unix timestamp
+    "DueDate": 1759708800,
+    "Status": "Open",
+    "Memo": "October services"
+}])
+# Returns: {"inserted_ids": [bill_id]}
+```
+
+**Step 2: Create Bill Line(s)**
+```python
+add_records("BillLines", [{
+    "Bill": 1,  # bill_id from step 1
+    "Item": 1,  # optional - auto-fills Account/Description
+    "Account": 36,  # expense account
+    "Description": "Monthly subscription",
+    "Amount": 100.00
+}])
+```
+
+**Step 3: Create Journal Entry**
+```python
+# Transaction header
+add_records("Transactions", [{
+    "Date": 1759708800,
+    "Description": "Acme Corp - October services",
+    "Reference": "INV-001",
+    "Status": "Posted"
+}])
+# Returns: {"inserted_ids": [txn_id]}
+
+# Transaction lines: Debit expense, Credit AP
+add_records("TransactionLines", [
+    {"Transaction": 1, "Account": 36, "Debit": 100.00, "Credit": 0, "Memo": "Monthly subscription"},
+    {"Transaction": 1, "Account": 4, "Debit": 0, "Credit": 100.00, "Memo": "Monthly subscription"}
+])
+```
+
+**Step 4: Link Bill to Transaction**
+```python
+update_records("Bills", [{"id": 1, "fields": {"EntryTransaction": 1}}])
+```
+
+### Pay Bill from Checking Account
+
+```python
+# Step 1: Create payment transaction
+add_records("Transactions", [{
+    "Date": 1760832000,
+    "Description": "Payment - Acme Corp INV-001",
+    "Reference": "Check #1001",
+    "Status": "Cleared"
+}])
+# Returns: {"inserted_ids": [txn_id]}
+
+# Step 2: Debit AP, Credit Checking
+add_records("TransactionLines", [
+    {"Transaction": 2, "Account": 4, "Debit": 100.00, "Credit": 0, "Memo": "Pay INV-001"},
+    {"Transaction": 2, "Account": 14, "Debit": 0, "Credit": 100.00, "Memo": "Pay INV-001"}
+])
+
+# Step 3: Create BillPayment record
+add_records("BillPayments", [{
+    "Bill": 1,
+    "Transaction": 2,
+    "Amount": 100.00,
+    "PaymentDate": 1760832000
+}])
+
+# Step 4: Update bill status
+update_records("Bills", [{"id": 1, "fields": {"Status": "Paid"}}])
+```
+
+### Pay Bill via Owner Reimbursement
+
+When the owner pays a business expense personally:
+
+```python
+# Step 1: Create payment transaction
+add_records("Transactions", [{
+    "Date": 1760832000,
+    "Description": "Owner payment - Acme Corp INV-001",
+    "Reference": "Owner Reimb",
+    "Status": "Posted"
+}])
+
+# Step 2: Debit AP, Credit Due to Owner (not Checking)
+add_records("TransactionLines", [
+    {"Transaction": 2, "Account": 4, "Debit": 100.00, "Credit": 0, "Memo": "Pay INV-001"},
+    {"Transaction": 2, "Account": 22, "Debit": 0, "Credit": 100.00, "Memo": "Owner paid"}
+])
+
+# Step 3: Create BillPayment record
+add_records("BillPayments", [{
+    "Bill": 1,
+    "Transaction": 2,
+    "Amount": 100.00,
+    "PaymentDate": 1760832000
+}])
+
+# Step 4: Update bill status
+update_records("Bills", [{"id": 1, "fields": {"Status": "Paid"}}])
+```
+
+### Reimburse Owner
+
+When business pays back the owner:
+
+```python
+add_records("Transactions", [{
+    "Date": 1762041600,
+    "Description": "Owner reimbursement",
+    "Reference": "Transfer",
     "Status": "Cleared"
 }])
 
 add_records("TransactionLines", [
-    {"Transaction": txn_id, "Account": office_supplies_id, "Debit": 50},
-    {"Transaction": txn_id, "Account": checking_id, "Credit": 50}
+    {"Transaction": 3, "Account": 22, "Debit": 500.00, "Credit": 0, "Memo": "Reimburse owner"},
+    {"Transaction": 3, "Account": 14, "Debit": 0, "Credit": 500.00, "Memo": "Reimburse owner"}
 ])
 ```
 
-### Enter a Bill (Accounts Payable)
+## Batch Operations
 
-1. Create Bill record with Vendor, BillDate, DueDate
-2. Add BillLines with Item/Account and Amount
-3. Create Transaction: Debit expense accounts, Credit AP
-4. Link Bill.EntryTransaction to the transaction
+When entering multiple bills efficiently:
 
+1. **Create all Bills first** → collect inserted IDs
+2. **Create all BillLines** referencing bill IDs
+3. **Create all Transactions** → collect inserted IDs
+4. **Create all TransactionLines** referencing transaction IDs
+5. **Update all Bills** with EntryTransaction links in one call
+6. (If paying) Create payment transactions, lines, and BillPayments
+
+Example batch update:
 ```python
-# $150 electric bill from vendor
-bill = add_records("Bills", [{
-    "Vendor": vendor_id,
-    "BillDate": "2026-01-03",
-    "DueDate": "2026-02-02",
-    "Status": "Open"
-}])
-
-add_records("BillLines", [{
-    "Bill": bill_id,
-    "Account": utilities_id,
-    "Description": "January electric",
-    "Amount": 150
-}])
-
-# Journal entry
-txn = add_records("Transactions", [{
-    "Date": "2026-01-03",
-    "Description": "Electric Co - January"
-}])
-
-add_records("TransactionLines", [
-    {"Transaction": txn_id, "Account": utilities_id, "Debit": 150},
-    {"Transaction": txn_id, "Account": ap_id, "Credit": 150}
-])
-
-# Link bill to transaction
-update_records("Bills", [{"id": bill_id, "fields": {"EntryTransaction": txn_id}}])
-```
-
-### Pay a Bill
-
-```python
-# Pay $150 bill
-txn = add_records("Transactions", [{
-    "Date": "2026-01-15",
-    "Description": "Payment - Electric Co",
-    "Reference": "Check #1001"
-}])
-
-add_records("TransactionLines", [
-    {"Transaction": txn_id, "Account": ap_id, "Debit": 150},
-    {"Transaction": txn_id, "Account": checking_id, "Credit": 150}
-])
-
-add_records("BillPayments", [{
-    "Bill": bill_id,
-    "Transaction": txn_id,
-    "Amount": 150,
-    "PaymentDate": "2026-01-15"
-}])
-
-# Bill.Status auto-updates based on AmountDue formula
-```
-
-### Owner Reimbursement
-
-When owner pays business expense personally:
-```python
-# Debit expense, Credit "Due to Owner" (liability 2203)
-add_records("TransactionLines", [
-    {"Transaction": txn_id, "Account": expense_id, "Debit": 50},
-    {"Transaction": txn_id, "Account": due_to_owner_id, "Credit": 50}
+update_records("Bills", [
+    {"id": 1, "fields": {"EntryTransaction": 1}},
+    {"id": 2, "fields": {"EntryTransaction": 2}},
+    {"id": 3, "fields": {"EntryTransaction": 3}}
 ])
 ```
 
-When business reimburses owner:
-```python
-# Debit "Due to Owner", Credit Checking
-add_records("TransactionLines", [
-    {"Transaction": txn_id, "Account": due_to_owner_id, "Debit": 50},
-    {"Transaction": txn_id, "Account": checking_id, "Credit": 50}
-])
+## Common Queries
+
+### Unpaid Bills by Vendor
+```sql
+SELECT v.Name, b.BillNumber, b.BillDate, b.Amount, b.AmountDue
+FROM Bills b
+JOIN Vendors v ON b.Vendor = v.id
+WHERE b.Status IN ('Open', 'Partial')
+ORDER BY b.DueDate
 ```
 
-## Querying Data
-
-### Get Account Balances
-
-```python
-# All accounts with balances
-sql_query("SELECT Code, Name, Type, Balance FROM Accounts ORDER BY Code")
-
-# Cash accounts only
-sql_query("SELECT Name, Balance FROM Accounts WHERE Parent = 1")  # Parent 1 = Cash
-
-# Total by account type
-sql_query("SELECT Type, SUM(Balance) FROM Accounts WHERE Parent IS NULL GROUP BY Type")
+### Bills Summary by Vendor
+```sql
+SELECT v.Name as Vendor, COUNT(b.id) as Bills, SUM(b.Amount) as Total, SUM(b.AmountDue) as Due
+FROM Bills b
+JOIN Vendors v ON b.Vendor = v.id
+GROUP BY v.Name
+ORDER BY Total DESC
 ```
 
-### Get Unpaid Bills
+### Account Balances (Non-Zero)
+```sql
+SELECT Code, Name, Type, Balance
+FROM Accounts
+WHERE Balance != 0
+ORDER BY Code
+```
 
-```python
-sql_query("""
-    SELECT v.Name, b.BillNumber, b.DueDate, b.AmountDue
-    FROM Bills b
-    JOIN Vendors v ON b.Vendor = v.id
-    WHERE b.Status IN ('Open', 'Partial')
-    ORDER BY b.DueDate
-""")
+### Owner Reimbursement Balance
+```sql
+SELECT Balance FROM Accounts WHERE Code = '2203'
+```
+
+### Expense Summary by Account
+```sql
+SELECT a.Code, a.Name, a.Balance
+FROM Accounts a
+WHERE a.Type = 'Expense' AND a.Balance != 0
+ORDER BY a.Balance DESC
 ```
 
 ### Transaction History for Account
-
-```python
-sql_query("""
-    SELECT t.Date, t.Description, tl.Debit, tl.Credit
-    FROM TransactionLines tl
-    JOIN Transactions t ON tl.Transaction = t.id
-    WHERE tl.Account = ?
-    ORDER BY t.Date DESC
-""", account_id)
+```sql
+SELECT t.Date, t.Description, t.Reference, tl.Debit, tl.Credit
+FROM TransactionLines tl
+JOIN Transactions t ON tl.Transaction = t.id
+WHERE tl.Account = 36
+ORDER BY t.Date DESC
 ```
 
-## Key Account Codes
+### Verify All Transactions Balance
+```sql
+SELECT id, Description, Total, IsBalanced
+FROM Transactions
+WHERE IsBalanced = false
+```
 
-| Code | Name | Use For |
-|------|------|---------|
-| 1001 | Checking Account | Primary bank account |
-| 2000 | Accounts Payable | Bills owed to vendors |
-| 2203 | Due to Owner | Owner reimbursements |
-| 3002 | Owner's Draws | Money withdrawn by owner |
-| 4001 | Service Revenue | Primary income |
+## Validation Checklist
 
-## Validation Rules
+After entering bills, verify:
 
-1. **Transactions must balance**: `SUM(Debit) = SUM(Credit)`
-2. **Each line has Debit OR Credit**, not both
-3. **Bills need at least one BillLine**
-4. **BillPayments cannot exceed AmountDue**
-
-## Formula Columns (Auto-Calculated)
-
-| Table.Column | Formula |
-|--------------|---------|
-| Accounts.Balance | OwnBalance + ChildrenBalance |
-| Transactions.IsBalanced | Sum debits = Sum credits |
-| Bills.Amount | Sum of BillLines.Amount |
-| Bills.AmountDue | Amount - AmountPaid |
-| Vendors.Balance | Sum of unpaid bills |
+- [ ] Total bills match expected: `SELECT SUM(Amount) FROM Bills`
+- [ ] All transactions balanced: `SELECT * FROM Transactions WHERE IsBalanced = false`
+- [ ] AP balance correct: `SELECT Balance FROM Accounts WHERE Code = '2000'`
+- [ ] Expense accounts increased appropriately
+- [ ] Vendor balances reflect unpaid bills
 
 ## Common Mistakes
 
 | Mistake | Fix |
 |---------|-----|
-| Transaction not balanced | Ensure debits = credits before saving |
+| Transaction not balanced | Ensure SUM(Debit) = SUM(Credit) before saving |
 | Wrong debit/credit direction | Assets/Expenses increase with debit; Liabilities/Equity/Income increase with credit |
 | Posting to parent account | Post to leaf accounts (1001 Checking, not 1000 Cash) |
-| Forgetting AP entry for bills | Bills need both the expense entry AND the AP credit |
+| Forgetting AP entry for bills | Bills need both the expense debit AND the AP credit |
+| Missing EntryTransaction link | Always update Bill.EntryTransaction after creating journal entry |
+| Bill status not updated | Manually set Status to "Paid" after full payment |
+| Using string dates | Dates must be Unix timestamps (seconds), not strings |
+
+## Formula Columns (Auto-Calculated)
+
+| Table.Column | Description |
+|--------------|-------------|
+| Accounts.Balance | OwnBalance + ChildrenBalance |
+| Transactions.IsBalanced | True if sum of debits = sum of credits |
+| Transactions.Total | Sum of debit amounts |
+| Bills.Amount | Sum of BillLines.Amount |
+| Bills.AmountPaid | Sum of BillPayments.Amount |
+| Bills.AmountDue | Amount - AmountPaid |
+| Vendors.Balance | Sum of AmountDue for unpaid bills |
