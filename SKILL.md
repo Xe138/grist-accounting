@@ -375,6 +375,121 @@ FROM Transactions
 WHERE IsBalanced = false
 ```
 
+## Financial Reports
+
+### Balance Sheet
+
+Shows Assets = Liabilities + Equity at a point in time.
+
+**Important:** Parent accounts roll up child balances. Query only top-level parents (Parent = 0) to avoid double-counting.
+
+```sql
+-- Assets, Liabilities, Equity (top-level only)
+SELECT Code, Name, Type, Balance
+FROM Accounts
+WHERE Type IN ('Asset', 'Liability', 'Equity')
+  AND Parent = 0
+ORDER BY Type, Code
+```
+
+```sql
+-- Net Income (for Equity section)
+-- Query leaf expense accounts only (no children)
+SELECT
+  COALESCE(SUM(CASE WHEN Type = 'Income' THEN Balance ELSE 0 END), 0) -
+  COALESCE(SUM(CASE WHEN Type = 'Expense' THEN Balance ELSE 0 END), 0) as NetIncome
+FROM Accounts
+WHERE Type IN ('Income', 'Expense')
+  AND id NOT IN (SELECT DISTINCT Parent FROM Accounts WHERE Parent != 0)
+```
+
+**Presentation:**
+| **Assets** | |
+|---|---:|
+| Cash & Bank Accounts | $X.XX |
+| Accounts Receivable | $X.XX |
+| **Total Assets** | **$X.XX** |
+
+| **Liabilities** | |
+|---|---:|
+| Accounts Payable | $X.XX |
+| Due to Owner | $X.XX |
+| **Total Liabilities** | **$X.XX** |
+
+| **Equity** | |
+|---|---:|
+| Retained Earnings | $X.XX |
+| Net Income (Loss) | $X.XX |
+| **Total Equity** | **$X.XX** |
+
+| **Total Liabilities + Equity** | **$X.XX** |
+
+### Income Statement
+
+Shows Revenue - Expenses = Net Income for a period.
+
+```sql
+-- All income and expense accounts (leaf accounts only)
+SELECT Code, Name, Type, Balance
+FROM Accounts
+WHERE Type IN ('Income', 'Expense')
+  AND Balance != 0
+  AND id NOT IN (SELECT DISTINCT Parent FROM Accounts WHERE Parent != 0)
+ORDER BY Type DESC, Code
+```
+
+**Presentation:**
+| **Income** | |
+|---|---:|
+| Service Revenue | $X.XX |
+| **Total Income** | **$X.XX** |
+
+| **Expenses** | |
+|---|---:|
+| Software & Subscriptions | $X.XX |
+| Professional Services | $X.XX |
+| **Total Expenses** | **$X.XX** |
+
+| **Net Income (Loss)** | **$X.XX** |
+
+### Trial Balance
+
+Lists all accounts with non-zero balances. Debits should equal Credits.
+
+```sql
+SELECT
+  Code,
+  Name,
+  Type,
+  CASE WHEN Type IN ('Asset', 'Expense') THEN Balance ELSE 0 END as Debit,
+  CASE WHEN Type IN ('Liability', 'Equity', 'Income') THEN Balance ELSE 0 END as Credit
+FROM Accounts
+WHERE Balance != 0
+  AND id NOT IN (SELECT DISTINCT Parent FROM Accounts WHERE Parent != 0)
+ORDER BY Code
+```
+
+### Accounts Payable Aging
+
+```sql
+SELECT
+  v.Name as Vendor,
+  b.BillNumber,
+  b.BillDate,
+  b.DueDate,
+  b.AmountDue,
+  CASE
+    WHEN b.DueDate >= strftime('%s', 'now') THEN 'Current'
+    WHEN b.DueDate >= strftime('%s', 'now') - 2592000 THEN '1-30 Days'
+    WHEN b.DueDate >= strftime('%s', 'now') - 5184000 THEN '31-60 Days'
+    ELSE '60+ Days'
+  END as Aging
+FROM Bills b
+JOIN Vendors v ON b.Vendor = v.id
+WHERE b.Status IN ('Open', 'Partial')
+ORDER BY b.DueDate
+```
+
 ## Validation Checklist
 
 After entering bills, verify:
