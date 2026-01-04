@@ -170,7 +170,7 @@ add_records("Items", [{
 }])
 ```
 
-### Complete Bill Entry (4 Steps)
+### Complete Bill Entry (5 Steps)
 
 **Step 1: Create Bill Header**
 ```python
@@ -218,6 +218,16 @@ add_records("TransactionLines", [
 ```python
 update_records("Bills", [{"id": 1, "fields": {"EntryTransaction": 1}}])
 ```
+
+**Step 5: Upload Invoice Attachment (if available)**
+
+If an invoice PDF is available, upload and link it:
+```bash
+# Get session token, then upload
+./scripts/upload-attachment.sh invoice.pdf Bills 1 $TOKEN
+```
+
+Or for batch uploads, use a script (see Batch Operations).
 
 ### Pay Bill from Checking Account
 
@@ -308,6 +318,26 @@ When entering multiple bills efficiently:
 4. **Create all TransactionLines** referencing transaction IDs
 5. **Update all Bills** with EntryTransaction links in one call
 6. (If paying) Create payment transactions, lines, and BillPayments
+7. **Upload invoice attachments** if files are available
+
+### Batch Attachment Uploads
+
+When invoice files are available, upload them after bill entry:
+
+1. Request session token with write permission (1 hour TTL for batch work)
+2. Create a mapping of bill_id → invoice file path
+3. Loop: upload each file, link to corresponding bill
+
+```bash
+# Example batch upload pattern
+TOKEN=$(request_session_token with write permission)
+for each (bill_id, invoice_path):
+    curl -X POST -H "Authorization: Bearer $TOKEN" \
+         -F "file=@$invoice_path" \
+         https://grist-mcp.bballou.com/api/v1/attachments
+    # Returns attachment_id
+    update_records("Bills", [{"id": bill_id, "fields": {"Attachment": ["L", attachment_id]}}])
+```
 
 Example batch update:
 ```python
@@ -499,6 +529,7 @@ After entering bills, verify:
 - [ ] AP balance correct: `SELECT Balance FROM Accounts WHERE Code = '2000'`
 - [ ] Expense accounts increased appropriately
 - [ ] Vendor balances reflect unpaid bills
+- [ ] Invoice attachments linked: `SELECT id, BillNumber FROM Bills WHERE Attachment IS NULL`
 
 ## Common Mistakes
 
@@ -511,6 +542,7 @@ After entering bills, verify:
 | Missing EntryTransaction link | Always update Bill.EntryTransaction after creating journal entry |
 | Bill status not updated | Manually set Status to "Paid" after full payment |
 | Using string dates | Dates must be Unix timestamps (seconds), not strings |
+| Missing invoice attachments | Upload invoices after bill entry if files available |
 
 ## Uploading Attachments
 
