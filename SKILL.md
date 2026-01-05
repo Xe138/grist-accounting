@@ -78,7 +78,8 @@ Python: `int(datetime(2025, 10, 1).timestamp())`
 | Status | Choice | "Open", "Partial", "Paid" |
 | Memo | Text | |
 | EntryTransaction | Ref:Transactions | Link to journal entry |
-| Attachment | Attachments | Invoice/receipt files (use `["L", id]` format) |
+| Invoice | Attachments | Vendor invoice document (use `["L", id]` format) |
+| Receipt | Attachments | Payment receipt/confirmation (use `["L", id]` format) |
 | Amount | Formula | Sum of BillLines.Amount |
 | AmountPaid | Formula | Sum of BillPayments.Amount |
 | AmountDue | Formula | Amount - AmountPaid |
@@ -219,12 +220,12 @@ add_records("TransactionLines", [
 update_records("Bills", [{"id": 1, "fields": {"EntryTransaction": 1}}])
 ```
 
-**Step 5: Upload Invoice Attachment (if available)**
+**Step 5: Upload Invoice (if available)**
 
-If an invoice PDF is available, upload and link it:
+If an invoice PDF is available, upload and link it to the Invoice field:
 ```bash
-# Get session token, then upload
-./scripts/upload-attachment.sh invoice.pdf Bills 1 $TOKEN
+# Get session token, then upload to Invoice field
+bash /path/to/scripts/upload-attachment.sh invoice.pdf Bills 1 $TOKEN Invoice
 ```
 
 Or for batch uploads, use a script (see Batch Operations).
@@ -257,6 +258,9 @@ add_records("BillPayments", [{
 
 # Step 4: Update bill status
 update_records("Bills", [{"id": 1, "fields": {"Status": "Paid"}}])
+
+# Step 5: Upload receipt (if available)
+bash /path/to/scripts/upload-attachment.sh receipt.pdf Bills 1 $TOKEN Receipt
 ```
 
 ### Pay Bill via Owner Reimbursement
@@ -288,6 +292,9 @@ add_records("BillPayments", [{
 
 # Step 4: Update bill status
 update_records("Bills", [{"id": 1, "fields": {"Status": "Paid"}}])
+
+# Step 5: Upload receipt (if available)
+bash /path/to/scripts/upload-attachment.sh receipt.pdf Bills 1 $TOKEN Receipt
 ```
 
 ### Reimburse Owner
@@ -329,14 +336,17 @@ When invoice files are available, upload them after bill entry:
 3. Loop: upload each file, link to corresponding bill
 
 ```bash
-# Example batch upload pattern
+# Example batch upload pattern for invoices
 TOKEN=$(request_session_token with write permission)
 for each (bill_id, invoice_path):
     curl -X POST -H "Authorization: Bearer $TOKEN" \
          -F "file=@$invoice_path" \
          https://grist-mcp.bballou.com/api/v1/attachments
     # Returns attachment_id
-    update_records("Bills", [{"id": bill_id, "fields": {"Attachment": ["L", attachment_id]}}])
+    update_records("Bills", [{"id": bill_id, "fields": {"Invoice": ["L", attachment_id]}}])
+
+# For receipts (after payment):
+    update_records("Bills", [{"id": bill_id, "fields": {"Receipt": ["L", attachment_id]}}])
 ```
 
 Example batch update:
@@ -529,7 +539,8 @@ After entering bills, verify:
 - [ ] AP balance correct: `SELECT Balance FROM Accounts WHERE Code = '2000'`
 - [ ] Expense accounts increased appropriately
 - [ ] Vendor balances reflect unpaid bills
-- [ ] Invoice attachments linked: `SELECT id, BillNumber FROM Bills WHERE Attachment IS NULL`
+- [ ] Invoices attached: `SELECT id, BillNumber FROM Bills WHERE Invoice IS NULL`
+- [ ] Receipts attached for paid bills: `SELECT id, BillNumber FROM Bills WHERE Status = 'Paid' AND Receipt IS NULL`
 
 ## Common Mistakes
 
@@ -542,7 +553,7 @@ After entering bills, verify:
 | Missing EntryTransaction link | Always update Bill.EntryTransaction after creating journal entry |
 | Bill status not updated | Manually set Status to "Paid" after full payment |
 | Using string dates | Dates must be Unix timestamps (seconds), not strings |
-| Missing invoice attachments | Upload invoices after bill entry if files available |
+| Missing invoice/receipt | Upload invoice after bill entry, receipt after payment |
 
 ## Uploading Attachments
 
@@ -561,23 +572,26 @@ Use `scripts/upload-attachment.sh` in this skill directory:
 ```bash
 # Get session token first (via MCP request_session_token tool)
 # Then run:
-./scripts/upload-attachment.sh invoice.pdf Bills 13
-
-# Or pass token directly:
-./scripts/upload-attachment.sh invoice.pdf Bills 13 sess_abc123...
+bash scripts/upload-attachment.sh invoice.pdf Bills 13              # Invoice column (default)
+bash scripts/upload-attachment.sh invoice.pdf Bills 13 $TOKEN       # With token
+bash scripts/upload-attachment.sh receipt.pdf Bills 13 $TOKEN Receipt  # Receipt column
 
 # Environment variable for custom endpoint:
-GRIST_MCP_URL=https://custom.example.com ./scripts/upload-attachment.sh ...
+GRIST_MCP_URL=https://custom.example.com bash scripts/upload-attachment.sh ...
 ```
 
-Run `./scripts/upload-attachment.sh` without arguments for full usage.
+Run `bash scripts/upload-attachment.sh` without arguments for full usage.
 
 ### Linking Attachments Manually
 
 Grist attachment columns use format: `["L", attachment_id]`
 
 ```python
-update_records("Bills", [{"id": 13, "fields": {"Attachment": ["L", 1]}}])
+# Link invoice to bill
+update_records("Bills", [{"id": 13, "fields": {"Invoice": ["L", 1]}}])
+
+# Link receipt to bill (after payment)
+update_records("Bills", [{"id": 13, "fields": {"Receipt": ["L", 2]}}])
 ```
 
 ## Formula Columns (Auto-Calculated)
