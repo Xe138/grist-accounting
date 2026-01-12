@@ -9,6 +9,33 @@ description: Use when working with the Grist double-entry accounting system - re
 
 A complete double-entry accounting system for sole proprietorship service businesses. Every transaction creates balanced journal entries (debits = credits). Account balances roll up through parent-child hierarchy.
 
+## Recording Transactions: Decision Guide
+
+| Source Document | What to Create |
+|-----------------|----------------|
+| **Invoice/Bill PDF from vendor** | Bill + BillLines + Transaction + TransactionLines |
+| **Receipt showing payment** | BillPayment + attach Receipt to existing Bill |
+| **Bank statement entry** | Transaction + TransactionLines only |
+| **Journal adjustment** | Transaction + TransactionLines only |
+
+**Key Rule:** If there's a vendor invoice number, always create a Bill record—not just a transaction. Bills provide:
+- Vendor tracking and AP aging
+- Invoice/Receipt attachment storage
+- Payment status tracking (Open/Partial/Paid)
+
+### Quick Reference: Vendor Invoice Paid by Owner
+
+When recording an invoice that was already paid by the owner:
+
+1. Upload Invoice attachment → get attachment_id
+2. Create Bill (Status: "Paid", Invoice: ["L", attachment_id])
+3. Create BillLine(s) with expense account and amount
+4. Create Transaction (debit Expense, credit Due to Owner)
+5. Create TransactionLines
+6. Update Bill.EntryTransaction to link to transaction
+7. Create BillPayment record
+8. Upload Receipt attachment if available
+
 ## MCP Tools Available
 
 | Tool | Purpose |
