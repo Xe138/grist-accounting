@@ -2,6 +2,8 @@
 
 Detailed code examples for common accounting operations.
 
+**Important:** Before adding records, consult [schema.md](schema.md) to identify writable fields. Formula columns (marked "Formula" in schema) must NOT be included in `add_records` payloads or a 400 error will occur.
+
 ## Contents
 - [Create a Vendor](#create-a-vendor)
 - [Create Items](#create-items-for-common-purchases)
@@ -227,3 +229,74 @@ update_records("Bills", [
     {"id": 3, "fields": {"EntryTransaction": 3}}
 ])
 ```
+
+## Sample Payloads
+
+Copy-paste ready JSON payloads for `add_records`. Only writable fields are included.
+
+### Owner Equity Contribution
+
+```json
+// Transaction
+{"Date": 1768348800, "Description": "Owner equity contribution", "Reference": "Owner Investment", "Status": "Posted", "Memo": ""}
+
+// TransactionLines (Debit Checking, Credit Owner's Investment)
+[
+  {"Transaction": 51, "Account": 14, "Debit": 1000, "Credit": 0, "Memo": "Owner equity contribution"},
+  {"Transaction": 51, "Account": 23, "Debit": 0, "Credit": 1000, "Memo": "Owner equity contribution"}
+]
+```
+
+### Owner Draw
+
+```json
+// Transaction
+{"Date": 1768348800, "Description": "Owner draw", "Reference": "Transfer", "Status": "Cleared", "Memo": ""}
+
+// TransactionLines (Debit Owner's Draws, Credit Checking)
+[
+  {"Transaction": 52, "Account": 24, "Debit": 500, "Credit": 0, "Memo": "Owner draw"},
+  {"Transaction": 52, "Account": 14, "Debit": 0, "Credit": 500, "Memo": "Owner draw"}
+]
+```
+
+### Direct Expense (No Bill)
+
+For bank fees, minor expenses without vendor invoices:
+
+```json
+// Transaction
+{"Date": 1768348800, "Description": "Bank service fee", "Reference": "Statement", "Status": "Cleared", "Memo": "Monthly account fee"}
+
+// TransactionLines (Debit Expense, Credit Checking)
+[
+  {"Transaction": 53, "Account": 30, "Debit": 15, "Credit": 0, "Memo": "Monthly fee"},
+  {"Transaction": 53, "Account": 14, "Debit": 0, "Credit": 15, "Memo": "Monthly fee"}
+]
+```
+
+### Revenue Receipt
+
+```json
+// Transaction
+{"Date": 1768348800, "Description": "Client payment - Project X", "Reference": "INV-100", "Status": "Cleared", "Memo": ""}
+
+// TransactionLines (Debit Checking, Credit Revenue)
+[
+  {"Transaction": 54, "Account": 14, "Debit": 2500, "Credit": 0, "Memo": "Project X payment"},
+  {"Transaction": 54, "Account": 25, "Debit": 0, "Credit": 2500, "Memo": "Service revenue"}
+]
+```
+
+### Key Account IDs Reference
+
+| ID | Code | Name |
+|----|------|------|
+| 4 | 2000 | Accounts Payable |
+| 14 | 1001 | Checking Account |
+| 22 | 2203 | Due to Owner |
+| 23 | 3001 | Owner's Investment |
+| 24 | 3002 | Owner's Draws |
+| 25 | 4001 | Service Revenue |
+| 30 | 5020 | Bank & Merchant Fees |
+| 36 | 5080 | Software & Subscriptions |
