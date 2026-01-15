@@ -11,10 +11,25 @@ Double-entry accounting for sole proprietorship. Every transaction creates balan
 
 | Task | Action |
 |------|--------|
-| Record vendor invoice | Create Bill + BillLines + Transaction + TransactionLines, then audit |
-| Record payment | Create payment Transaction + BillPayment, update Bill status |
+| Record vendor invoice | Use template from `templates/`, then audit |
+| Record payment | Use template from `templates/`, then audit |
 | Query balances | Use `sql_query` on Accounts table |
 | Generate reports | See [queries.md](references/queries.md) |
+
+## Transaction Templates
+
+**Always use templates** when creating transactions to avoid errors with formula fields.
+
+| Scenario | Template |
+|----------|----------|
+| Invoice paid by credit card | [bill-paid-credit-card.json](templates/bill-paid-credit-card.json) |
+| Invoice paid by owner | [bill-paid-owner.json](templates/bill-paid-owner.json) |
+| Invoice paid from checking | [bill-paid-checking.json](templates/bill-paid-checking.json) |
+| Invoice not yet paid | [bill-unpaid.json](templates/bill-unpaid.json) |
+| Pay existing bill | [pay-existing-bill.json](templates/pay-existing-bill.json) |
+| Direct expense (no bill) | [direct-expense.json](templates/direct-expense.json) |
+
+Templates contain only writable fields. See [templates.md](references/templates.md) for usage guide.
 
 ## Recording Transactions: Decision Guide
 
@@ -110,11 +125,15 @@ After entering bills:
 
 | Mistake | Fix |
 |---------|-----|
+| Writing to formula columns | Use templates - they only include writable fields |
 | Transaction not balanced | Ensure SUM(Debit) = SUM(Credit) |
 | Wrong debit/credit direction | Assets/Expenses: debit increases; Liabilities/Equity/Income: credit increases |
 | Posting to parent account | Post to leaf accounts (1001 not 1000) |
 | Missing EntryTransaction link | Always link Bill to Transaction |
 | Using string dates | Use Unix timestamps |
+| SQL error on TransactionLines | Column `Transaction` is reserved; use `get_records` with filter |
+
+**Formula Columns (read-only):** Bills.Amount, Bills.AmountPaid, Bills.AmountDue, Transactions.Total, Transactions.IsBalanced
 
 ## Uploading Attachments
 
@@ -171,6 +190,7 @@ For full audit queries and remediation: see [audit.md](references/audit.md)
 
 | File | Contents |
 |------|----------|
+| [references/templates.md](references/templates.md) | Template usage guide |
 | [references/schema.md](references/schema.md) | Complete table schemas |
 | [references/workflows.md](references/workflows.md) | Detailed code examples |
 | [references/queries.md](references/queries.md) | SQL queries and financial reports |

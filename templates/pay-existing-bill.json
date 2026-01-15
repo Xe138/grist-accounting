@@ -1,0 +1,119 @@
+{
+  "_meta": {
+    "name": "Pay Existing Bill",
+    "description": "Record payment for a bill that was previously entered as unpaid",
+    "scenario": "Bill was recorded earlier with Status='Open', now recording the payment",
+    "prerequisite": "Bill must already exist with EntryTransaction linked"
+  },
+  "_variables": {
+    "bill_id": "integer - Existing Bill record ID",
+    "payment_date_timestamp": "integer - Unix timestamp for payment date",
+    "amount": "number - Payment amount (usually matches Bill.AmountDue)",
+    "payment_account_id": "integer - Payment source: 14=Checking, 19=Credit Card, 22=Due to Owner",
+    "payment_account_name": "string - Account name for transaction memo",
+    "payment_reference": "string - Check number, confirmation code, etc.",
+    "vendor_name": "string - Vendor name for transaction description"
+  },
+  "_sequence": [
+    "1. Verify bill exists and has AmountDue > 0",
+    "2. Create payment Transaction → get payment_txn_id",
+    "3. Create payment TransactionLines (Dr AP, Cr Payment Account)",
+    "4. Create BillPayment record",
+    "5. Update Bill.Status → 'Paid' (if fully paid)",
+    "6. Upload Receipt attachment if available",
+    "7. Run audit checks"
+  ],
+  "_pre_check": {
+    "_doc": "Verify bill status before proceeding",
+    "query": "SELECT id, BillNumber, Amount, AmountDue, Status FROM Bills WHERE id = {{bill_id}}",
+    "expected": "AmountDue > 0 and Status = 'Open'"
+  },
+  "records": {
+    "payment_transaction": {
+      "_doc": "Step 2: Create payment transaction header.",
+      "_table": "Transactions",
+      "_operation": "add_records",
+      "payload": {
+        "Date": "{{payment_date_timestamp}}",
+        "Description": "Payment to {{vendor_name}}",
+        "Reference": "{{payment_reference}}",
+        "Status": "Cleared"
+      }
+    },
+    "payment_transaction_lines": {
+      "_doc": "Step 3: Create payment transaction lines. Debit AP, credit payment account.",
+      "_table": "TransactionLines",
+      "_operation": "add_records",
+      "_requires": ["payment_txn_id"],
+      "payload": [
+        {
+          "Transaction": "{{payment_txn_id}}",
+          "Account": 4,
+          "Debit": "{{amount}}",
+          "Credit": 0,
+          "Memo": "Accounts Payable"
+        },
+        {
+          "Transaction": "{{payment_txn_id}}",
+          "Account": "{{payment_account_id}}",
+          "Debit": 0,
+          "Credit": "{{amount}}",
+          "Memo": "{{payment_account_name}}"
+        }
+      ]
+    },
+    "bill_payment": {
+      "_doc": "Step 4: Create BillPayment linking bill to payment transaction.",
+      "_table": "BillPayments",
+      "_operation": "add_records",
+      "_requires": ["bill_id", "payment_txn_id"],
+      "payload": {
+        "Bill": "{{bill_id}}",
+        "Transaction": "{{payment_txn_id}}",
+        "Amount": "{{amount}}",
+        "PaymentDate": "{{payment_date_timestamp}}"
+      }
+    },
+    "mark_paid": {
+      "_doc": "Step 5: Update Bill status to Paid (only if AmountDue becomes 0).",
+      "_table": "Bills",
+      "_operation": "update_records",
+      "_requires": ["bill_id"],
+      "_condition": "Only if Bill.AmountDue = 0 after payment",
+      "payload": {
+        "id": "{{bill_id}}",
+        "fields": {
+          "Status": "Paid"
+        }
+      }
+    }
+  },
+  "journal_entries": {
+    "_doc": "Journal entry created by this template",
+    "payment": {
+      "description": "Record payment clearing accounts payable",
+      "debits": [{"account": "Accounts Payable (2000)", "amount": "{{amount}}"}],
+      "credits": [{"account": "Payment Account", "amount": "{{amount}}"}]
+    }
+  },
+  "payment_account_options": {
+    "checking": {
+      "id": 14,
+      "code": "1001",
+      "name": "Checking Account",
+      "type": "Asset"
+    },
+    "credit_card": {
+      "id": 19,
+      "code": "2101",
+      "name": "Business Credit Card",
+      "type": "Liability"
+    },
+    "owner_paid": {
+      "id": 22,
+      "code": "2203",
+      "name": "Due to Owner",
+      "type": "Liability"
+    }
+  }
+}

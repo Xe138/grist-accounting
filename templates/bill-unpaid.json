@@ -1,0 +1,115 @@
+{
+  "_meta": {
+    "name": "Unpaid Bill (Accounts Payable)",
+    "description": "Record a vendor bill that has not yet been paid",
+    "scenario": "Invoice received but payment will be made later",
+    "accounts": {
+      "expense": "The expense account to debit",
+      "accounts_payable": "Accounts Payable liability (4) - credits increase amount owed"
+    }
+  },
+  "_variables": {
+    "vendor_id": "integer - Vendor record ID",
+    "bill_number": "string - Invoice/bill number from vendor",
+    "date_timestamp": "integer - Unix timestamp for bill date",
+    "due_date_timestamp": "integer - Unix timestamp for due date",
+    "amount": "number - Total amount including tax",
+    "expense_account_id": "integer - Expense account ID to debit",
+    "line_description": "string - Description for bill line",
+    "vendor_name": "string - Vendor name for transaction descriptions"
+  },
+  "_sequence": [
+    "1. Create Bill record → get bill_id",
+    "2. Create BillLine → links to bill_id",
+    "3. Create entry Transaction → get entry_txn_id",
+    "4. Create entry TransactionLines (Dr Expense, Cr AP)",
+    "5. Update Bill.EntryTransaction → link to entry_txn_id",
+    "6. Upload Invoice attachment",
+    "7. Run audit checks",
+    "NOTE: Bill remains in 'Open' status until payment is recorded"
+  ],
+  "records": {
+    "bill": {
+      "_doc": "Step 1: Create Bill header. Do NOT include Amount - it's a formula field.",
+      "_table": "Bills",
+      "_operation": "add_records",
+      "payload": {
+        "Vendor": "{{vendor_id}}",
+        "BillNumber": "{{bill_number}}",
+        "BillDate": "{{date_timestamp}}",
+        "DueDate": "{{due_date_timestamp}}",
+        "Status": "Open",
+        "Memo": "{{line_description}}"
+      }
+    },
+    "bill_line": {
+      "_doc": "Step 2: Create BillLine. This populates the Bill.Amount formula.",
+      "_table": "BillLines",
+      "_operation": "add_records",
+      "_requires": ["bill_id"],
+      "payload": {
+        "Bill": "{{bill_id}}",
+        "Account": "{{expense_account_id}}",
+        "Description": "{{line_description}}",
+        "Amount": "{{amount}}"
+      }
+    },
+    "entry_transaction": {
+      "_doc": "Step 3: Create entry transaction header.",
+      "_table": "Transactions",
+      "_operation": "add_records",
+      "payload": {
+        "Date": "{{date_timestamp}}",
+        "Description": "{{vendor_name}} - Invoice {{bill_number}}",
+        "Reference": "{{bill_number}}",
+        "Status": "Posted"
+      }
+    },
+    "entry_transaction_lines": {
+      "_doc": "Step 4: Create entry transaction lines. Debit expense, credit AP.",
+      "_table": "TransactionLines",
+      "_operation": "add_records",
+      "_requires": ["entry_txn_id"],
+      "payload": [
+        {
+          "Transaction": "{{entry_txn_id}}",
+          "Account": "{{expense_account_id}}",
+          "Debit": "{{amount}}",
+          "Credit": 0,
+          "Memo": "{{line_description}}"
+        },
+        {
+          "Transaction": "{{entry_txn_id}}",
+          "Account": 4,
+          "Debit": 0,
+          "Credit": "{{amount}}",
+          "Memo": "Accounts Payable"
+        }
+      ]
+    },
+    "link_bill_to_entry": {
+      "_doc": "Step 5: Link Bill to entry transaction.",
+      "_table": "Bills",
+      "_operation": "update_records",
+      "_requires": ["bill_id", "entry_txn_id"],
+      "payload": {
+        "id": "{{bill_id}}",
+        "fields": {
+          "EntryTransaction": "{{entry_txn_id}}"
+        }
+      }
+    }
+  },
+  "journal_entries": {
+    "_doc": "Summary of journal entries created by this template",
+    "entry": {
+      "description": "Record expense and accounts payable liability",
+      "debits": [{"account": "Expense Account", "amount": "{{amount}}"}],
+      "credits": [{"account": "Accounts Payable (2000)", "amount": "{{amount}}"}]
+    }
+  },
+  "_follow_up": {
+    "description": "When payment is made, use pay-existing-bill.json template",
+    "required_data": ["bill_id", "payment_date", "payment_method", "payment_reference"]
+  }
+}

@@ -1,0 +1,92 @@
+{
+  "_meta": {
+    "name": "Direct Expense (No Bill)",
+    "description": "Record an expense directly without creating a bill record",
+    "scenario": "Bank fees, minor expenses, or transactions without vendor invoices",
+    "when_to_use": [
+      "Bank service fees",
+      "ATM fees",
+      "Minor cash purchases without receipts",
+      "Automatic deductions with no invoice"
+    ],
+    "when_not_to_use": [
+      "Vendor invoices - use bill templates instead",
+      "Expenses needing AP tracking",
+      "Purchases requiring receipt documentation"
+    ]
+  },
+  "_variables": {
+    "date_timestamp": "integer - Unix timestamp for transaction date",
+    "amount": "number - Transaction amount",
+    "expense_account_id": "integer - Expense account ID to debit",
+    "payment_account_id": "integer - Payment source account ID (14=Checking, 19=Credit Card)",
+    "description": "string - Transaction description",
+    "reference": "string - Reference number (statement line, confirmation, etc.)",
+    "memo": "string - Additional notes (optional)"
+  },
+  "_sequence": [
+    "1. Create Transaction header → get txn_id",
+    "2. Create TransactionLines (Dr Expense, Cr Payment Account)",
+    "3. Run audit check (verify IsBalanced = true)"
+  ],
+  "records": {
+    "transaction": {
+      "_doc": "Step 1: Create transaction header.",
+      "_table": "Transactions",
+      "_operation": "add_records",
+      "payload": {
+        "Date": "{{date_timestamp}}",
+        "Description": "{{description}}",
+        "Reference": "{{reference}}",
+        "Status": "Cleared",
+        "Memo": "{{memo}}"
+      }
+    },
+    "transaction_lines": {
+      "_doc": "Step 2: Create transaction lines. Debit expense, credit payment account.",
+      "_table": "TransactionLines",
+      "_operation": "add_records",
+      "_requires": ["txn_id"],
+      "payload": [
+        {
+          "Transaction": "{{txn_id}}",
+          "Account": "{{expense_account_id}}",
+          "Debit": "{{amount}}",
+          "Credit": 0,
+          "Memo": "{{description}}"
+        },
+        {
+          "Transaction": "{{txn_id}}",
+          "Account": "{{payment_account_id}}",
+          "Debit": 0,
+          "Credit": "{{amount}}",
+          "Memo": "{{description}}"
+        }
+      ]
+    }
+  },
+  "journal_entries": {
+    "_doc": "Summary of journal entry created by this template",
+    "entry": {
+      "description": "Record direct expense",
+      "debits": [{"account": "Expense Account", "amount": "{{amount}}"}],
+      "credits": [{"account": "Payment Account (Checking/Credit Card)", "amount": "{{amount}}"}]
+    }
+  },
+  "examples": {
+    "bank_fee": {
+      "description": "Monthly bank service fee",
+      "expense_account_id": 30,
+      "payment_account_id": 14,
+      "expense_account_name": "Bank & Merchant Fees (5020)",
+      "payment_account_name": "Checking Account (1001)"
+    },
+    "credit_card_fee": {
+      "description": "Credit card annual fee",
+      "expense_account_id": 30,
+      "payment_account_id": 19,
+      "expense_account_name": "Bank & Merchant Fees (5020)",
+      "payment_account_name": "Business Credit Card (2101)"
+    }
+  }
+}

@@ -1,0 +1,177 @@
+{
+  "_meta": {
+    "name": "Bill Paid by Owner (Reimbursement)",
+    "description": "Record a vendor bill that the owner paid personally (to be reimbursed later)",
+    "scenario": "Owner used personal funds to pay a business expense",
+    "accounts": {
+      "expense": "The expense account to debit",
+      "due_to_owner": "Due to Owner liability account (22) - credits increase amount owed to owner"
+    }
+  },
+  "_variables": {
+    "vendor_id": "integer - Vendor record ID",
+    "bill_number": "string - Invoice/bill number from vendor",
+    "date_timestamp": "integer - Unix timestamp for bill and payment date",
+    "due_date_timestamp": "integer - Unix timestamp for due date",
+    "amount": "number - Total amount including tax",
+    "expense_account_id": "integer - Expense account ID to debit",
+    "line_description": "string - Description for bill line",
+    "vendor_name": "string - Vendor name for transaction descriptions",
+    "receipt_number": "string - Receipt/confirmation number (optional)"
+  },
+  "_sequence": [
+    "1. Create Bill record → get bill_id",
+    "2. Create BillLine → links to bill_id",
+    "3. Create entry Transaction → get entry_txn_id",
+    "4. Create entry TransactionLines (Dr Expense, Cr AP)",
+    "5. Update Bill.EntryTransaction → link to entry_txn_id",
+    "6. Create payment Transaction → get payment_txn_id",
+    "7. Create payment TransactionLines (Dr AP, Cr Due to Owner)",
+    "8. Create BillPayment record",
+    "9. Update Bill.Status → 'Paid'",
+    "10. Upload attachments (Invoice, Receipt)",
+    "11. Run audit checks"
+  ],
+  "records": {
+    "bill": {
+      "_doc": "Step 1: Create Bill header. Do NOT include Amount - it's a formula field.",
+      "_table": "Bills",
+      "_operation": "add_records",
+      "payload": {
+        "Vendor": "{{vendor_id}}",
+        "BillNumber": "{{bill_number}}",
+        "BillDate": "{{date_timestamp}}",
+        "DueDate": "{{due_date_timestamp}}",
+        "Status": "Open",
+        "Memo": "{{line_description}}"
+      }
+    },
+    "bill_line": {
+      "_doc": "Step 2: Create BillLine. This populates the Bill.Amount formula.",
+      "_table": "BillLines",
+      "_operation": "add_records",
+      "_requires": ["bill_id"],
+      "payload": {
+        "Bill": "{{bill_id}}",
+        "Account": "{{expense_account_id}}",
+        "Description": "{{line_description}}",
+        "Amount": "{{amount}}"
+      }
+    },
+    "entry_transaction": {
+      "_doc": "Step 3: Create entry transaction header.",
+      "_table": "Transactions",
+      "_operation": "add_records",
+      "payload": {
+        "Date": "{{date_timestamp}}",
+        "Description": "{{vendor_name}} - Invoice {{bill_number}}",
+        "Reference": "{{bill_number}}",
+        "Status": "Posted"
+      }
+    },
+    "entry_transaction_lines": {
+      "_doc": "Step 4: Create entry transaction lines. Debit expense, credit AP.",
+      "_table": "TransactionLines",
+      "_operation": "add_records",
+      "_requires": ["entry_txn_id"],
+      "payload": [
+        {
+          "Transaction": "{{entry_txn_id}}",
+          "Account": "{{expense_account_id}}",
+          "Debit": "{{amount}}",
+          "Credit": 0,
+          "Memo": "{{line_description}}"
+        },
+        {
+          "Transaction": "{{entry_txn_id}}",
+          "Account": 4,
+          "Debit": 0,
+          "Credit": "{{amount}}",
+          "Memo": "Accounts Payable"
+        }
+      ]
+    },
+    "link_bill_to_entry": {
+      "_doc": "Step 5: Link Bill to entry transaction.",
+      "_table": "Bills",
+      "_operation": "update_records",
+      "_requires": ["bill_id", "entry_txn_id"],
+      "payload": {
+        "id": "{{bill_id}}",
+        "fields": {
+          "EntryTransaction": "{{entry_txn_id}}"
+        }
+      }
+    },
+    "payment_transaction": {
+      "_doc": "Step 6: Create payment transaction header.",
+      "_table": "Transactions",
+      "_operation": "add_records",
+      "payload": {
+        "Date": "{{date_timestamp}}",
+        "Description": "Owner payment - {{vendor_name}}",
+        "Reference": "{{receipt_number}}",
+        "Status": "Posted"
+      }
+    },
+    "payment_transaction_lines": {
+      "_doc": "Step 7: Create payment transaction lines. Debit AP, credit Due to Owner.",
+      "_table": "TransactionLines",
+      "_operation": "add_records",
+      "_requires": ["payment_txn_id"],
+      "payload": [
+        {
+          "Transaction": "{{payment_txn_id}}",
+          "Account": 4,
+          "Debit": "{{amount}}",
+          "Credit": 0,
+          "Memo": "Accounts Payable"
+        },
+        {
+          "Transaction": "{{payment_txn_id}}",
+          "Account": 22,
+          "Debit": 0,
+          "Credit": "{{amount}}",
+          "Memo": "Due to Owner"
+        }
+      ]
+    },
+    "bill_payment": {
+      "_doc": "Step 8: Create BillPayment linking bill to payment transaction.",
+      "_table": "BillPayments",
+      "_operation": "add_records",
+      "_requires": ["bill_id", "payment_txn_id"],
+      "payload": {
+        "Bill": "{{bill_id}}",
+        "Transaction": "{{payment_txn_id}}",
+        "Amount": "{{amount}}",
+        "PaymentDate": "{{date_timestamp}}"
+      }
+    },
+    "mark_paid": {
+      "_doc": "Step 9: Update Bill status to Paid.",
+      "_table": "Bills",
+      "_operation": "update_records",
+      "_requires": ["bill_id"],
+      "payload": {
+        "id": "{{bill_id}}",
+        "fields": {
+          "Status": "Paid"
+        }
+      }
+    }
+  },
+  "journal_entries": {
+    "_doc": "Summary of journal entries created by this template",
+    "entry": {
+      "description": "Record expense and liability",
+      "debits": [{"account": "Expense Account", "amount": "{{amount}}"}],
+      "credits": [{"account": "Accounts Payable (2000)", "amount": "{{amount}}"}]
+    },
+    "payment": {
+      "description": "Record owner payment - increases amount business owes to owner",
+      "debits": [{"account": "Accounts Payable (2000)", "amount": "{{amount}}"}],
+      "credits": [{"account": "Due to Owner (2203)", "amount": "{{amount}}"}]
+    }
+  }
+}
