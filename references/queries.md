@@ -5,10 +5,7 @@ Common queries and financial report templates.
 ## Contents
 - [Common Queries](#common-queries)
 - [Financial Reports](#financial-reports)
-  - [Balance Sheet](#balance-sheet)
-  - [Income Statement](#income-statement)
-  - [Trial Balance](#trial-balance)
-  - [AP Aging](#accounts-payable-aging)
+- [Reconciliation Queries](#reconciliation-queries)
 
 ## Common Queries
 
@@ -178,4 +175,55 @@ FROM Bills b
 JOIN Vendors v ON b.Vendor = v.id
 WHERE b.Status IN ('Open', 'Partial')
 ORDER BY b.DueDate
+```
+
+## Reconciliation Queries
+
+### Cleared Balance for Bank Account
+
+Use `get_records` to avoid the `Transaction` reserved word issue:
+
+```python
+# Step 1: Get all TransactionLines for Checking (id=14)
+lines = get_records("TransactionLines", filter={"Account": [14]})
+
+# Step 2: Get cleared transaction IDs
+txn_ids = list(set(line["Transaction"] for line in lines))
+cleared = sql_query(f"SELECT id FROM Transactions WHERE Status = 'Cleared' AND id IN (...)")
+cleared_ids = set(row["id"] for row in cleared)
+
+# Step 3: Sum Debit - Credit for cleared lines
+cleared_balance = sum(
+    line["Debit"] - line["Credit"]
+    for line in lines
+    if line["Transaction"] in cleared_ids
+)
+```
+
+### Outstanding Items (Not Cleared by Bank)
+
+```sql
+SELECT t.id, t.Date, t.Description, t.Status,
+       tl.Debit, tl.Credit
+FROM TransactionLines tl
+JOIN Transactions t ON tl.Transaction = t.id
+WHERE tl.Account = 14
+  AND t.Status != 'Cleared'
+ORDER BY t.Date
+```
+
+### Reconciliation History
+
+```sql
+SELECT id, StatementDate, StatementBalance,
+       ClearedBalance, Difference, Status
+FROM Reconciliations
+WHERE Account = 14
+ORDER BY StatementDate DESC
+```
+
+### Active Bank Rules
+
+```python
+get_records("BankRules", filter={"Account": [14], "IsActive": [true]})
 ```

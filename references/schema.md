@@ -84,6 +84,29 @@ Complete table schemas for the Grist accounting system.
 | Amount | Numeric | Payment amount |
 | PaymentDate | Date | Unix timestamp |
 
+## Reconciliations
+| Column | Type | Notes |
+|--------|------|-------|
+| Account | Ref:Accounts | Bank account reconciled |
+| StatementDate | Date | Statement ending date (Unix timestamp) |
+| StatementBalance | Numeric | Ending balance per bank statement |
+| ClearedBalance | Numeric | Sum of cleared transactions in ledger |
+| Difference | Numeric | StatementBalance - ClearedBalance |
+| Status | Choice | "In Progress", "Completed", "Abandoned" |
+| StartedAt | Date | Unix timestamp |
+| CompletedAt | Date | Unix timestamp (null until done) |
+| Notes | Text | |
+
+## BankRules
+| Column | Type | Notes |
+|--------|------|-------|
+| Account | Ref:Accounts | Bank account this rule applies to |
+| Pattern | Text | Substring to match against bank description |
+| MatchType | Choice | "Contains", "Starts With", "Exact" |
+| OffsetAccount | Ref:Accounts | Account to categorize to |
+| TransactionDescription | Text | Description template for created transactions |
+| IsActive | Bool | |
+
 ## Formula Columns (Auto-Calculated)
 
 | Table.Column | Description |

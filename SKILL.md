@@ -13,6 +13,7 @@ Double-entry accounting for sole proprietorship. Every transaction creates balan
 |------|--------|
 | Record vendor invoice | Use template from `templates/`, then audit |
 | Record payment | Use template from `templates/`, then audit |
+| Reconcile bank account | See [reconciliation.md](references/reconciliation.md) |
 | Query balances | Use `sql_query` on Accounts table |
 | Generate reports | See [queries.md](references/queries.md) |
 
@@ -28,6 +29,8 @@ Double-entry accounting for sole proprietorship. Every transaction creates balan
 | Invoice not yet paid | [bill-unpaid.json](templates/bill-unpaid.json) |
 | Pay existing bill | [pay-existing-bill.json](templates/pay-existing-bill.json) |
 | Direct expense (no bill) | [direct-expense.json](templates/direct-expense.json) |
+| Bank import - deposit | [bank-import-deposit.json](templates/bank-import-deposit.json) |
+| Bank import - withdrawal | [bank-import-expense.json](templates/bank-import-expense.json) |
 
 Templates contain only writable fields. See [templates.md](references/templates.md) for usage guide.
 
@@ -38,6 +41,7 @@ Templates contain only writable fields. See [templates.md](references/templates.
 | **Invoice/Bill from vendor** | Bill + BillLines + Transaction + TransactionLines |
 | **Receipt showing payment** | BillPayment + attach Receipt to existing Bill |
 | **Bank statement entry** | Transaction + TransactionLines only |
+| **Bank export file** | Run bank reconciliation workflow (see below) |
 | **Journal adjustment** | Transaction + TransactionLines only |
 
 **Key Rule:** If there's a vendor invoice number, always create a Bill record.
@@ -113,6 +117,18 @@ For detailed code: see [workflows.md](references/workflows.md)
 Same as above but Cr Due to Owner (id=22) instead of Checking
 
 For detailed code: see [workflows.md](references/workflows.md)
+
+## Bank Reconciliation Workflow (4 Phases)
+
+Import bank transactions, match against ledger, create missing entries, and verify balances.
+
+**Phase 1 — Import:** Read bank export file (Schwab JSON), parse dates/amounts, present summary
+**Phase 2 — Match:** Fetch TransactionLines for bank account via `get_records`, match by amount + date (±3 days)
+**Phase 3 — Create:** For unmatched bank entries, check BankRules, suggest offset account by Type, create Transaction + TransactionLines (Status="Cleared")
+**Phase 4 — Reconcile:** Create Reconciliation record, calculate cleared balance, compare to statement balance
+
+For detailed reference: see [reconciliation.md](references/reconciliation.md)
+For workflow code examples: see [workflows.md](references/workflows.md)
 
 ## Validation Checklist
 
@@ -195,3 +211,4 @@ For full audit queries and remediation: see [audit.md](references/audit.md)
 | [references/workflows.md](references/workflows.md) | Detailed code examples |
 | [references/queries.md](references/queries.md) | SQL queries and financial reports |
 | [references/audit.md](references/audit.md) | Audit queries and remediation |
+| [references/reconciliation.md](references/reconciliation.md) | Bank reconciliation workflow |

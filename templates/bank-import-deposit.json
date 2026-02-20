@@ -1,0 +1,86 @@
+{
+  "_meta": {
+    "name": "Bank Import - Deposit",
+    "description": "Record a deposit found in bank statement but missing from the ledger",
+    "scenario": "Unmatched bank deposit (interest, incoming transfer, revenue)",
+    "when_to_use": [
+      "Bank interest payments",
+      "Incoming transfers from owner",
+      "Revenue deposits",
+      "Any bank credit not yet in the ledger"
+    ],
+    "when_not_to_use": [
+      "Deposits already recorded in the ledger",
+      "Vendor refunds with existing bill records"
+    ]
+  },
+  "_variables": {
+    "date_timestamp": "integer - Unix timestamp for transaction date",
+    "amount": "number - Deposit amount (positive)",
+    "offset_account_id": "integer - Account to credit (e.g., 23=Owner's Investment, 25=Service Revenue)",
+    "description": "string - Transaction description",
+    "reference": "string - Bank reference or description from statement",
+    "memo": "string - Additional notes (optional)"
+  },
+  "_sequence": [
+    "1. Create Transaction header (Status='Cleared') -> get txn_id",
+    "2. Create TransactionLines (Dr Checking, Cr Offset Account)",
+    "3. Verify IsBalanced = true"
+  ],
+  "records": {
+    "transaction": {
+      "_doc": "Step 1: Create transaction header. Status is Cleared since bank confirms it.",
+      "_table": "Transactions",
+      "_operation": "add_records",
+      "payload": {
+        "Date": "{{date_timestamp}}",
+        "Description": "{{description}}",
+        "Reference": "{{reference}}",
+        "Status": "Cleared",
+        "Memo": "{{memo}}"
+      }
+    },
+    "transaction_lines": {
+      "_doc": "Step 2: Debit Checking (asset increase), Credit offset account.",
+      "_table": "TransactionLines",
+      "_operation": "add_records",
+      "_requires": ["txn_id"],
+      "payload": [
+        {
+          "Transaction": "{{txn_id}}",
+          "Account": 14,
+          "Debit": "{{amount}}",
+          "Credit": 0,
+          "Memo": "{{description}}"
+        },
+        {
+          "Transaction": "{{txn_id}}",
+          "Account": "{{offset_account_id}}",
+          "Debit": 0,
+          "Credit": "{{amount}}",
+          "Memo": "{{description}}"
+        }
+      ]
+    }
+  },
+  "journal_entries": {
+    "_doc": "Summary of journal entry created by this template",
+    "entry": {
+      "description": "Record bank deposit",
+      "debits": [{"account": "Checking Account (1001)", "amount": "{{amount}}"}],
+      "credits": [{"account": "Offset Account", "amount": "{{amount}}"}]
+    }
+  },
+  "examples": {
+    "interest_income": {
+      "description": "Interest Paid",
+      "offset_account_id": 26,
+      "offset_account_name": "Interest Income (4010)"
+    },
+    "owner_transfer": {
+      "description": "Transfer from owner",
+      "offset_account_id": 23,
+      "offset_account_name": "Owner's Investment (3001)"
+    }
+  }
+}

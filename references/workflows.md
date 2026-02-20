@@ -12,6 +12,7 @@ Detailed code examples for common accounting operations.
 - [Pay Bill via Owner](#pay-bill-via-owner-reimbursement)
 - [Reimburse Owner](#reimburse-owner)
 - [Batch Operations](#batch-operations)
+- [Bank Reconciliation](#bank-reconciliation)
 
 ## Create a Vendor
 
@@ -298,5 +299,124 @@ For bank fees, minor expenses without vendor invoices:
 | 23 | 3001 | Owner's Investment |
 | 24 | 3002 | Owner's Draws |
 | 25 | 4001 | Service Revenue |
+| 26 | 4010 | Interest Income |
 | 30 | 5020 | Bank & Merchant Fees |
 | 36 | 5080 | Software & Subscriptions |
+
+## Bank Reconciliation
+
+Import bank transactions, match against ledger, create missing entries, and reconcile.
+
+For full reference: see [reconciliation.md](reconciliation.md)
+
+### Phase 1: Import Bank File (Schwab JSON)
+
+```python
+# Read and parse the bank export file
+import json
+with open("path/to/schwab_export.json") as f:
+    data = json.load(f)
+
+# Parse each PostedTransaction
+for txn in data["PostedTransactions"]:
+    # Date: "MM/DD/YYYY" -> Unix timestamp
+    # Amount: parse "$X,XXX.XX" strings; Deposit = positive, Withdrawal = negative
+    # Empty string = no amount (skip)
+    pass
+```
+
+### Phase 2: Match Against Ledger
+
+```python
+# Fetch existing TransactionLines for Checking (id=14)
+# MUST use get_records, not sql_query (Transaction is reserved word)
+get_records("TransactionLines", filter={"Account": [14]})
+
+# Get transaction details for date matching
+sql_query("SELECT id, Date, Description, Status FROM Transactions WHERE id IN (...)")
+
+# Match criteria: exact amount AND date ±3 days AND not already matched
+# Deposits match Debit > 0 (money into checking = debit to asset)
+# Withdrawals match Credit > 0 (money out of checking = credit to asset)
+```
+
+### Phase 3: Create Missing Transactions
+
+```python
+# For unmatched deposits (e.g., interest income):
+add_records("Transactions", [{
+    "Date": 1738195200,
+    "Description": "Bank interest income",
+    "Reference": "Interest Paid",
+    "Status": "Cleared",
+    "Memo": "Auto-imported from bank statement"
+}])
+# Returns: {"inserted_ids": [txn_id]}
+
+# Dr Checking, Cr Interest Income
+add_records("TransactionLines", [
+    {"Transaction": txn_id, "Account": 14, "Debit": 0.01, "Credit": 0, "Memo": "Bank interest"},
+    {"Transaction": txn_id, "Account": 26, "Debit": 0, "Credit": 0.01, "Memo": "Bank interest"}
+])
+
+# For unmatched withdrawals (e.g., ATM owner draw):
+add_records("Transactions", [{
+    "Date": 1739750400,
+    "Description": "ATM withdrawal - owner draw",
+    "Reference": "P421164 88 ESSEX STREET NEW YORK",
+    "Status": "Cleared",
+    "Memo": "Auto-imported from bank statement"
+}])
+
+# Dr Owner's Draws, Cr Checking
+add_records("TransactionLines", [
+    {"Transaction": txn_id, "Account": 24, "Debit": 102.00, "Credit": 0, "Memo": "ATM withdrawal"},
+    {"Transaction": txn_id, "Account": 14, "Debit": 0, "Credit": 102.00, "Memo": "ATM withdrawal"}
+])
+
+# Optionally save a BankRule for auto-categorization:
+add_records("BankRules", [{
+    "Account": 14,
+    "Pattern": "Interest Paid",
+    "MatchType": "Contains",
+    "OffsetAccount": 26,
+    "TransactionDescription": "Bank interest income",
+    "IsActive": true
+}])
+```
+
+### Phase 4: Reconcile
+
+```python
+# Update matched existing transactions to Cleared status
+update_records("Transactions", [
+    {"id": existing_txn_id, "fields": {"Status": "Cleared"}}
+])
+
+# Calculate cleared balance
+lines = get_records("TransactionLines", filter={"Account": [14]})
+txn_ids = list(set(l["fields"]["Transaction"] for l in lines))
+cleared = sql_query(f"SELECT id FROM Transactions WHERE Status = 'Cleared' AND id IN (...)")
+cleared_ids = set(r["id"] for r in cleared)
+cleared_balance = sum(
+    l["fields"]["Debit"] - l["fields"]["Credit"]
+    for l in lines
+    if l["fields"]["Transaction"] in cleared_ids
+)
+
+# Create Reconciliation record
+add_records("Reconciliations", [{
+    "Account": 14,
+    "StatementDate": 1739750400,  # date of last bank entry
+    "StatementBalance": 1398.01,
+    "ClearedBalance": cleared_balance,
+    "Difference": 1398.01 - cleared_balance,
+    "Status": "Completed",  # if Difference == 0
+    "StartedAt": 1739923200,  # today
+    "CompletedAt": 1739923200,
+    "Notes": "Reconciled against Schwab export"
+}])
+
+# Verify
+sql_query("SELECT * FROM Transactions WHERE IsBalanced = false")
+```

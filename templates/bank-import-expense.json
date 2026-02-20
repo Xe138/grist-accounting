@@ -1,0 +1,86 @@
+{
+  "_meta": {
+    "name": "Bank Import - Withdrawal/Expense",
+    "description": "Record a withdrawal found in bank statement but missing from the ledger",
+    "scenario": "Unmatched bank withdrawal (ATM, check, ACH debit, owner draw)",
+    "when_to_use": [
+      "ATM withdrawals (owner draws)",
+      "Check payments",
+      "ACH debits",
+      "Any bank debit not yet in the ledger"
+    ],
+    "when_not_to_use": [
+      "Withdrawals already recorded in the ledger",
+      "Bill payments with existing bill records - use pay-existing-bill.json"
+    ]
+  },
+  "_variables": {
+    "date_timestamp": "integer - Unix timestamp for transaction date",
+    "amount": "number - Withdrawal amount (positive, will be credited to Checking)",
+    "offset_account_id": "integer - Account to debit (e.g., 24=Owner's Draws, 30=Bank Fees)",
+    "description": "string - Transaction description",
+    "reference": "string - Bank reference or description from statement",
+    "memo": "string - Additional notes (optional)"
+  },
+  "_sequence": [
+    "1. Create Transaction header (Status='Cleared') -> get txn_id",
+    "2. Create TransactionLines (Dr Offset Account, Cr Checking)",
+    "3. Verify IsBalanced = true"
+  ],
+  "records": {
+    "transaction": {
+      "_doc": "Step 1: Create transaction header. Status is Cleared since bank confirms it.",
+      "_table": "Transactions",
+      "_operation": "add_records",
+      "payload": {
+        "Date": "{{date_timestamp}}",
+        "Description": "{{description}}",
+        "Reference": "{{reference}}",
+        "Status": "Cleared",
+        "Memo": "{{memo}}"
+      }
+    },
+    "transaction_lines": {
+      "_doc": "Step 2: Debit offset account, Credit Checking (asset decrease).",
+      "_table": "TransactionLines",
+      "_operation": "add_records",
+      "_requires": ["txn_id"],
+      "payload": [
+        {
+          "Transaction": "{{txn_id}}",
+          "Account": "{{offset_account_id}}",
+          "Debit": "{{amount}}",
+          "Credit": 0,
+          "Memo": "{{description}}"
+        },
+        {
+          "Transaction": "{{txn_id}}",
+          "Account": 14,
+          "Debit": 0,
+          "Credit": "{{amount}}",
+          "Memo": "{{description}}"
+        }
+      ]
+    }
+  },
+  "journal_entries": {
+    "_doc": "Summary of journal entry created by this template",
+    "entry": {
+      "description": "Record bank withdrawal",
+      "debits": [{"account": "Offset Account", "amount": "{{amount}}"}],
+      "credits": [{"account": "Checking Account (1001)", "amount": "{{amount}}"}]
+    }
+  },
+  "examples": {
+    "owner_draw": {
+      "description": "ATM withdrawal - owner draw",
+      "offset_account_id": 24,
+      "offset_account_name": "Owner's Draws (3002)"
+    },
+    "bank_fee": {
+      "description": "Bank service fee",
+      "offset_account_id": 30,
+      "offset_account_name": "Bank & Merchant Fees (5020)"
+    }
+  }
+}

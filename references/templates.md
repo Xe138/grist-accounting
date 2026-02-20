@@ -12,6 +12,8 @@ JSON templates for common accounting scenarios. Templates contain only **writabl
 | Vendor invoice received but not yet paid | `bill-unpaid.json` |
 | Recording payment for previously entered bill | `pay-existing-bill.json` |
 | Bank fees, minor expenses without invoices | `direct-expense.json` |
+| Bank import — unmatched deposit | `bank-import-deposit.json` |
+| Bank import — unmatched withdrawal | `bank-import-expense.json` |
 
 ## Template Structure
 
@@ -185,3 +187,5 @@ get_records("TransactionLines", filter={"Transaction": [52]})
 | [bill-unpaid.json](../templates/bill-unpaid.json) | Invoice recorded but not yet paid |
 | [pay-existing-bill.json](../templates/pay-existing-bill.json) | Payment for previously entered bill |
 | [direct-expense.json](../templates/direct-expense.json) | Direct expense without vendor bill |
+| [bank-import-deposit.json](../templates/bank-import-deposit.json) | Unmatched bank deposit (interest, transfer in) |
+| [bank-import-expense.json](../templates/bank-import-expense.json) | Unmatched bank withdrawal (ATM, check, ACH) |
